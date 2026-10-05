@@ -1,0 +1,35 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.*
+
+# IDE and OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Clojure / JVM
+target/
+.cpcache/
+.clj-kondo/.cache/
+.lsp/
+.nrepl-port
+.calva/
+*.class
+
+# Node / frontend
+node_modules/
+dist/
+.pnpm-store/
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log

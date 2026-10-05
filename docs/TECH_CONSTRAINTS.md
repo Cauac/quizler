@@ -35,6 +35,13 @@ This document lists only decisions that have been made, plus open questions that
 * Infrastructure as code: Terraform.
 * CI/CD: GitHub Actions.
 
+### Source repository
+* The GitHub repository is public. The source code is open to read; this is intentional.
+* Only the owner can push. Outside contributions are not accepted, so PRs from others are closed unaccepted.
+* Secrets are never committed. They are supplied to the server at runtime (for example from AWS Secrets Manager) and to CI through GitHub Actions secrets.
+* `.gitignore` excludes IDE files, local env files (`.env*`) and build output.
+* Repository settings to keep enabled: secret scanning with push protection, branch protection on `main` (no force-push, no deletion), and approval required before workflows run for outside collaborators' fork PRs.
+
 ## Open questions
 
 Not decided yet. Do not assume answers until they are recorded here.
