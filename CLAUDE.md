@@ -14,6 +14,7 @@ The product concept and game rules are in @docs/CONCEPT.md. Read it before desig
 ## Docs
 - `docs/CONCEPT.md` is the source of truth for game rules and platform behavior.
 - `docs/TECH_CONSTRAINTS.md` lists the decided technical constraints and the open questions. Backend: Clojure on the JVM, in a container on AWS. Frontends: TypeScript, served by the server. Do not assume anything listed as open there.
+- `docs/INFRA.md` describes the Terraform layout and the CI/CD setup.
 
 ## Working agreements
 - If the concept is ambiguous or a change conflicts with it, ask before implementing.
