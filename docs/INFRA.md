@@ -12,6 +12,7 @@ Decided stack is in [TECH_CONSTRAINTS.md](TECH_CONSTRAINTS.md). This document de
   * The deploy role (defined in `infra/`) can only push to the ECR repository and update the ECS service, and is trusted only for `main` of this repository.
   * Terraform owns the ECS service and ignores `task_definition` changes, so local applies do not roll back a release.
 * The database is an Aurora DSQL cluster, managed by Terraform in `infra/`. It uses IAM authentication only; the ECS task role gets `dsql:DbConnect` on the cluster. The database role and its `AWS IAM GRANT` are created once by hand with an `admin` token (see [TECH_CONSTRAINTS.md](TECH_CONSTRAINTS.md)). It is reached over its public endpoint, so no VPC endpoint is created.
+* Media files are in the S3 bucket `quizler-media`, managed by Terraform (`infra/media.tf`). It is private (public access block, bucket-owner-enforced ownership, SSE-S3 encryption); clients read through presigned URLs only. IAM access for the ECS task role is added together with the server code that uses it.
 * The repository is public, so workflow logs are public. Secret values are never managed by Terraform; it creates the secret containers only.
 
 ## Running Terraform
