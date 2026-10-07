@@ -13,11 +13,8 @@ Decided stack is in [TECH_CONSTRAINTS.md](TECH_CONSTRAINTS.md). This document de
   * Terraform owns the ECS service and ignores `task_definition` changes, so local applies do not roll back a release.
 * The repository is public, so workflow logs are public. Secret values are never managed by Terraform; it creates the secret containers only.
 
-## AWS credentials
-Terraform runs as the dedicated IAM user in the private AWS account,
-signed in with `aws login --profile quizler` and `export AWS_PROFILE=quizler`.
-Never use profiles for other accounts.
-Before every apply, check that `aws sts get-caller-identity` shows the Quizler account.
-
-## Day to day
-From `infra/`: `terraform init`, `terraform plan`, `terraform apply`.
+## Running Terraform
+Scripts in `infra/scripts/` (they refuse to run as any identity other than the Quizler IAM user):
+* `get-credentials.sh` signs in to the private AWS account.
+* `plan.sh` shows the changes.
+* `apply.sh` applies them after confirmation.
