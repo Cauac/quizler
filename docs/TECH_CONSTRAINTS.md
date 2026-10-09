@@ -27,6 +27,11 @@ This document lists only decisions that have been made, plus open questions that
   * One transaction mutates at most 3,000 rows or 10 MiB, and runs at most 5 minutes. DDL and DML must be in separate transactions, with one DDL statement per transaction. Indexes are created with `CREATE INDEX ASYNC`.
   * Collation is `C` only. Do not rely on case-insensitive comparison in the database.
   * Do not use `LISTEN/NOTIFY` for pushing updates. Real-time updates go through the server over SSE.
+  * No advisory locks (`pg_advisory_lock`) and no `serial` columns. Foreign keys are supported and enforced.
+  * `ALTER TABLE ... ADD COLUMN` accepts no constraints, so `NOT NULL DEFAULT` is rejected. Add the column plain and backfill separately.
+  * A DDL statement can fail with `OC001` ("schema has been updated by another transaction") while an async index job is running. Create tables before indexes and retry.
+* Schema changes: no migration tool. The schema is `db/schema.sql`, applied by hand in the AWS web console as `admin`, one statement per transaction. Every statement is idempotent, so the file can be re-run. Changes that are not idempotent (dropping or retyping a column, backfills) are run by hand and then reflected in the file.
+* Server connection: `software.amazon.dsql/aurora-dsql-jdbc-connector` (`jdbc:aws-dsql:postgresql://<endpoint>/postgres?user=<role>`) behind HikariCP and `next.jdbc` creates a fresh IAM token per connection. For local runs, the Java SDK does not read `aws login` profiles unless `software.amazon.awssdk/signin` is on the classpath; alternatively export credentials with `aws configure export-credentials --format env`.
 
 ### Frontend
 * Four apps: admin page, host control panel, big screen and captain webapp.
@@ -64,4 +69,3 @@ Not decided yet. Do not assume answers until they are recorded here.
 * Number of server tasks. SSE connections and the single live game suggest one task, but this is not decided.
 * Bedrock model for answer grading, and how a failed check becomes a "pending" answer.
 * Access token issuance and storage for hosts and content creators.
-* Database migration tool and Clojure setup. It must cope with DSQL's DDL rules (one DDL per transaction, `CREATE INDEX ASYNC`) and IAM token auth. Needs a short spike.
