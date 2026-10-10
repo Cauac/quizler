@@ -222,6 +222,9 @@ GitHub runs `run` steps with `bash -e` unless a shell is set, so a failing `aws 
 ### Review fix: OIDC subject claim format
 Found while checking that the repository can assume the role: `gh api repos/Cauac/quizler/actions/oidc/customization/sub` returns `use_immutable_subject: true` with the prefix `repo:Cauac@2319804/quizler@1406286552`. GitHub issues the immutable form (`repo:<owner>@<owner id>/<repo>@<repo id>:ref:refs/heads/main`) for repositories created after 15 July 2026, so the trust condition `repo:Cauac/quizler:ref:refs/heads/main` from the task would have rejected every run with "Not authorized to perform sts:AssumeRoleWithWebIdentity". `github.tf` now builds the condition from the owner and repository IDs (checked with `gh api repos/Cauac/quizler`). The classic form is not accepted any more, which is stricter; a rename, transfer or re-creation of the repository requires updating the IDs.
 
+### Review fix: ECR permissions for BuildKit
+First real deploy run (after the OIDC fix): role assumption, ECR login and the image-exists check passed, but `docker/build-push-action` failed at the push with `not authorized to perform: ecr:BatchGetImage`. BuildKit reads the manifest and layers it pushes, which plain `docker push` does not. `github.tf` now also allows `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` on the repository (needs `apply.sh`, then re-run the failed job).
+
 ### Open points
 * The owner's IAM user (`quizler-terraform`) must be allowed to update ECS services, change Route 53 records and describe ENIs for `start.sh`, `stop.sh` and the sync script. Not checked.
 * GitHub Actions versions are pinned by major tag, not by commit SHA.

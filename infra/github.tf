@@ -57,6 +57,9 @@ resource "aws_iam_role_policy" "deploy" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
+          # BuildKit (docker/build-push-action) also reads the manifest and layers it pushes.
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
           "ecr:DescribeImages", # re-runs skip the push when the tag exists (tags are immutable)
         ]
         Resource = aws_ecr_repository.server.arn
