@@ -25,6 +25,8 @@ Decided stack is in [TECH_CONSTRAINTS.md](TECH_CONSTRAINTS.md). This document de
 * The application is deployed by GitHub Actions (`.github/workflows/deploy.yml`) on push to `main` that touches `server/**` or the workflow file (and by hand): build the ARM64 image on a GitHub ARM runner, push it to ECR tagged with the git SHA (tags are immutable, so if that tag already exists, as on a re-run for the same commit, the build and push are skipped), register a new ECS task definition revision with that image and the `GIT_SHA` environment variable, and update the service. If the service is running (desired count 1) the workflow then waits for it to be stable and runs `sync-origin-dns.sh`; if it is stopped, the new revision applies at the next start.
   * GitHub authenticates to AWS with OIDC. No AWS keys are stored in GitHub.
   * The deploy role `quizler-deploy` (`infra/github.tf`) is trusted only for the `main` branch of this repository (scheduled workflows run on `main` too). The repository issues GitHub's immutable OIDC subject claims, so the trust condition is `repo:Cauac@<owner id>/quizler@<repo id>:ref:refs/heads/main` with the numeric IDs (see `infra/github.tf`); the classic `repo:Cauac/quizler:...` form would not match. If the repository is renamed, transferred or recreated, update the IDs. It can push to, read and describe images in the ECR repository, register task definitions, update this ECS service, pass the task roles, and what the DNS scripts need (list and describe tasks, describe network interfaces, find the hosted zone, change records in it). `route53:ListHostedZonesByName` is read-only and cannot be limited to one zone. Changing records is restricted by IAM conditions to `UPSERT` of `A` records named `origin.quizler.app`, so a compromised workflow on `main` cannot touch the apex, `www` or the ACM validation records.
+  * After the service update the workflow waits for the service to be stable and then checks that the PRIMARY deployment is the new task definition with `rolloutState` `COMPLETED`. When the circuit breaker rolls back, `aws ecs wait services-stable` succeeds on the old revision, so without this check a failed deploy would look green.
+  * Workflows set `defaults.run.shell: bash` so steps run with `pipefail` (GitHub's default shell does not), and the deploy role's ECR statement includes `ecr:BatchGetImage` and `ecr:GetDownloadUrlForLayer` because BuildKit reads what it pushes. Do not add a GitHub `environment:` to a job that assumes the role: it changes the OIDC subject claim and the trust condition stops matching.
   * One GitHub Actions repository **variable** (not a secret) is set by hand from a Terraform output: `AWS_DEPLOY_ROLE_ARN` (`deploy_role_arn`).
   * The image build uses `docker/build-push-action` with the GitHub Actions cache, so unchanged Maven dependencies are not downloaded again.
   * **How task definition changes ship.** CI registers each new revision by copying the latest revision and replacing the image and `GIT_SHA`. So a change to the task definition in Terraform (CPU, memory, env, logging) takes effect at the next deploy, not at `apply`; the service ignores Terraform's own revision. The copy keeps only the fields listed in the `jq` filter in `deploy.yml`; any other field (for example `ephemeralStorage` or `pidMode`) is dropped silently, so add it to the filter when you start using it. Revisions registered by CI do not get the `Project` and `ManagedBy` tags that Terraform's default tags put on its own revision.
@@ -47,3 +49,35 @@ Scripts in `infra/scripts/` (they refuse to run as any identity other than the Q
 3. `apply.sh` creates the rest. ACM validation completes once DNS is delegated. The service exists with 0 tasks.
 4. Set the repository variable `AWS_DEPLOY_ROLE_ARN` from the Terraform output, then push to `main` or run the Deploy workflow to build and deploy the first image.
 5. Run `start.sh` and open `https://quizler.app`.
+
+## Game night
+* Before: `infra/scripts/start.sh`. It brings the server up from zero, points DNS at the task, waits for `https://quizler.app/health` and prints the cold-start time. Run it again if the site goes down (for example after a task crashed).
+* After: `infra/scripts/stop.sh`. If it is forgotten, `stop.yml` stops the server at midnight UTC.
+* Do not push to `main` in between: a deploy drops all connections and any in-memory state.
+
+## Verifying the setup
+After changing the infrastructure, or when something looks wrong:
+* `start.sh` ends with the site up. `http://quizler.app` redirects to HTTPS, `https://www.quizler.app` works, `/health` returns 200, and `/` shows the build's git SHA.
+* The task port is not reachable except through CloudFront: `curl --max-time 5 http://<task IP>:8080/health` must time out (`dig +short origin.quizler.app` gives the IP).
+* `stop.sh` leaves zero tasks and `dig +short origin.quizler.app` returns `192.0.2.1`. Starting again points the record at the new IP.
+* A push that touches `server/**` while the server runs rolls the task, the site comes back, and the workflow is green.
+* Running `stop.yml` by hand (`gh workflow run stop.yml`) against a running server stops it.
+* `plan.sh` shows no changes after a deploy.
+
+## Cost
+About $1/month plus the domain renewal.
+
+| Item | Idle | Per game night (~3 h) |
+|---|---|---|
+| Fargate task + public IPv4 | $0 | ~$0.10 |
+| Route 53 hosted zone | $0.50/month | – |
+| CloudFront, ACM, ECR, logs | ~$0 | ~$0 |
+
+## Known limits and future work
+* A crashed task is not replaced in DNS (see above). If it happens in practice, add the EventBridge and Lambda updater.
+* After a task change CloudFront may use the old origin IP for up to the record's TTL (60 s). `start.sh` polls the public URL, so it waits this out.
+* The origin is plain HTTP and has no secret header (see above). An ALB or a secret header can be added later; with an ALB only the origin and the security group change.
+* A non-ALB origin limits CloudFront features (no VPC origin).
+* The task role is empty. `dsql:DbConnect`, S3 and Bedrock permissions are added with the code that needs them.
+* The task definition has no container health check (the JRE image has no `curl`). Revisit with the real server.
+* Idle detection (scaling down when there are no SSE connections) is not built. Add it with the real server.

@@ -12,6 +12,7 @@ This document lists only decisions that have been made, plus open questions that
 * Deployment: runs in a container on AWS ECS with Fargate, region `eu-north-1`.
 * The container is ARM64 (Graviton), 0.5 vCPU / 1 GB for now, built from a multi-stage `server/Dockerfile` (Clojure tools-deps image, then `eclipse-temurin:21-jre`), runs as a non-root user and listens on port 8080. The artifact is an uberjar built with `tools.build`.
 * No load balancer. CloudFront forwards to the task's public IP over plain HTTP on port 8080; the task security group admits only CloudFront's origin-facing prefix list. The task is in a public subnet (no NAT) with a public IP, which also gives it outbound access to DSQL, Bedrock and ECR.
+* The server must stop cleanly on SIGTERM, which ECS sends on every stop and deploy (30 s before it kills the task). The hello-world server drains in-flight requests in a shutdown hook, and the hook must wait for http-kit's `server-stop!` promise, since that call only signals the server. The real server keeps this.
 * The server runs as a single task that is started by hand before a game and stopped after it; a deploy replaces the task (old stops before new starts). This does not settle the open question about the number of server tasks.
 * DNS is on Route 53 (hosted zone managed by Terraform, nameservers set at Namecheap). The record that CloudFront uses as its origin is updated by a script with the running task's IP. See [INFRA.md](INFRA.md).
 
