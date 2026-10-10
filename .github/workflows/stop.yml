@@ -1,0 +1,50 @@
+# Safety net in case infra/scripts/stop.sh is forgotten after a game.
+# Caveats: GitHub may delay scheduled runs by tens of minutes, and disables scheduled
+# workflows in a public repository after 60 days without repository activity.
+name: Stop server
+
+on:
+#  schedule:
+#    - cron: "0 0 * * *" # midnight UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# An explicit shell makes GitHub run steps with "bash -eo pipefail" (the default has no pipefail).
+defaults:
+  run:
+    shell: bash
+
+env:
+  AWS_REGION: eu-north-1
+  CLUSTER: quizler
+  SERVICE: quizler-server
+
+jobs:
+  stop:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Stop the service
+        run: |
+          desired=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [[ "$desired" == "0" ]]; then
+            echo "Service is already stopped"
+          else
+            aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 0 >/dev/null
+            echo "Service stopped"
+          fi
+
+      # Always, even if the service was already stopped: the task's public IP goes back to AWS
+      # and must not stay in DNS (see infra/scripts/reset-origin-dns.sh).
+      - name: Reset the origin DNS record
+        run: infra/scripts/reset-origin-dns.sh

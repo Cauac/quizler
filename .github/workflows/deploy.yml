@@ -1,0 +1,124 @@
+# Builds the server image and rolls the ECS service to it. Do not push to main during a game:
+# the old task stops before the new one starts, so all connections drop.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+# An explicit shell makes GitHub run steps with "bash -eo pipefail" (the default has no pipefail).
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: deploy
+
+env:
+  AWS_REGION: eu-north-1
+  CLUSTER: quizler
+  SERVICE: quizler-server
+  REPOSITORY: quizler-server
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags are immutable, so a re-run on the same commit must not push again.
+      - name: Check whether the image exists
+        id: image
+        run: |
+          echo "IMAGE=${{ steps.ecr.outputs.registry }}/$REPOSITORY:$GITHUB_SHA" >> "$GITHUB_ENV"
+          if err=$(aws ecr describe-images --repository-name "$REPOSITORY" \
+              --image-ids imageTag="$GITHUB_SHA" 2>&1 >/dev/null); then
+            echo "Image $GITHUB_SHA already exists, skipping build and push"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$err" == *ImageNotFoundException* ]]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$err" >&2
+            exit 1
+          fi
+
+      - if: steps.image.outputs.exists == 'false'
+        uses: docker/setup-buildx-action@v4
+
+      # The Maven dependency layer is restored from the GitHub Actions cache.
+      - if: steps.image.outputs.exists == 'false'
+        uses: docker/build-push-action@v7
+        with:
+          context: server
+          push: true
+          tags: ${{ env.IMAGE }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Register a task definition with the new image
+        run: |
+          aws ecs describe-task-definition --task-definition "$SERVICE" --query taskDefinition \
+            | jq --arg image "$IMAGE" --arg sha "$GITHUB_SHA" '
+                {family, taskRoleArn, executionRoleArn, networkMode, volumes,
+                 requiresCompatibilities, cpu, memory, runtimePlatform, containerDefinitions}
+                | .containerDefinitions[0].image = $image
+                | .containerDefinitions[0].environment =
+                    ((.containerDefinitions[0].environment // [])
+                      | map(select(.name != "GIT_SHA")) + [{name: "GIT_SHA", value: $sha}])' \
+            > task-definition.json
+          arn=$(aws ecs register-task-definition --cli-input-json file://task-definition.json \
+            --query taskDefinition.taskDefinitionArn --output text)
+          echo "TASK_DEFINITION=$arn" >> "$GITHUB_ENV"
+
+      - name: Update the service
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" \
+            --task-definition "$TASK_DEFINITION" >/dev/null
+
+      # While the service is stopped the new revision simply applies on the next start.
+      - name: Wait for the rollout and update DNS
+        run: |
+          desired=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].desiredCount' --output text)
+          if [[ "$desired" != "1" ]]; then
+            echo "Service is stopped (desired count $desired); skipping DNS sync"
+            exit 0
+          fi
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+
+          # When the circuit breaker rolls back, the wait succeeds on the old revision.
+          # Fail unless the new revision is the primary deployment and has completed.
+          for _ in $(seq 12); do
+            read -r primary state < <(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+              --query "services[0].deployments[?status=='PRIMARY'] | [0].[taskDefinition, rolloutState]" \
+              --output text)
+            if [[ "$primary" != "$TASK_DEFINITION" || "$state" == "FAILED" ]]; then
+              echo "Deployment failed or was rolled back: primary is $primary ($state), expected $TASK_DEFINITION" >&2
+              exit 1
+            fi
+            [[ "$state" == "COMPLETED" ]] && break
+            sleep 5
+          done
+          if [[ "$state" != "COMPLETED" ]]; then
+            echo "Rollout is still $state after waiting" >&2
+            exit 1
+          fi
+
+          infra/scripts/sync-origin-dns.sh

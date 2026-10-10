@@ -1,4 +1,6 @@
-# Sourced by the other scripts. Runs terraform in infra/ as the quizler-terraform IAM user.
+# Sourced by the owner's scripts (plan, apply, start, stop). Switches to infra/, selects the quizler
+# AWS profile and region, and checks that the caller is the quizler-terraform IAM user.
+# Also defines the cluster, service and domain names.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -17,3 +19,8 @@ check_identity() {
   fi
   echo "AWS identity: $arn"
 }
+
+export AWS_REGION=eu-north-1
+CLUSTER=quizler
+SERVICE=quizler-server
+DOMAIN=quizler.app
