@@ -6,7 +6,7 @@ Decided stack is in [TECH_CONSTRAINTS.md](TECH_CONSTRAINTS.md). This document de
 * One environment: `production`. No staging.
 * Terraform lives in `infra/`. It is planned and applied from the owner's machine.
 * Terraform state is in the S3 bucket `quizler-terraform` (eu-north-1) with native locking (`use_lockfile`). The bucket was created by hand, is not managed by Terraform, and has versioning, encryption and a public access block enabled.
-* No domain at this stage. Public HTTPS comes from a CloudFront distribution on its default `*.cloudfront.net` name, in front of the ALB. A domain can be attached later.
+* Domain: `quizler.app`, registered at Namecheap. Captains reach the app through a QR code on the big screen, so the name only needs to be short and easy to read aloud; SEO is not a concern. The `.app` TLD is HSTS-preloaded, so it is HTTPS-only. It is not attached yet: public HTTPS still comes from a CloudFront distribution on its default `*.cloudfront.net` name, in front of the ALB. The domain is easy to replace if needed.
 * The application is deployed by GitHub Actions on push to `main`: build the image, push it to ECR, register a new ECS task definition revision and update the service.
   * GitHub authenticates to AWS with OIDC. No AWS keys are stored in GitHub.
   * The deploy role (defined in `infra/`) can only push to the ECR repository and update the ECS service, and is trusted only for `main` of this repository.
